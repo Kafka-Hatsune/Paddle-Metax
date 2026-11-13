@@ -840,6 +840,10 @@ add_dependencies(${TARGET_NAME} ${METAX_EXTERNAL_DEPS_TARGET})
 if(WITH_CINN)
   target_include_directories(${TARGET_NAME}
                              PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cinn")
+  # cinn/ builds metax_cinn_obj (InitCinnInterface, called from runtime.cc under
+  # WITH_CINN) as an OBJECT library but the parent never linked it in -> the glue
+  # symbols were missing from libpaddle-metax-gpu.so. Link the objects.
+  target_link_libraries(${TARGET_NAME} PRIVATE metax_cinn_obj)
 endif()
 
 target_include_directories(

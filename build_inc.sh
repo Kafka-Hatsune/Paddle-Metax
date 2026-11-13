@@ -15,6 +15,14 @@
 # limitations under the License.
 
 set -e
+set -o pipefail
+
+# ccache is incompatible with the cu-bridge `nvcc`->mxcc wrapper: it computes the
+# same cache key for different .cu/.cc sources, so files get each other's cached
+# object (verified: two different sources -> byte-identical .o). That silently
+# corrupts the build (kernels register the wrong op / not at all, duplicate
+# symbols, dropped functions). Disable it so every TU is compiled for real.
+export CCACHE_DISABLE=1
 
 pip uninstall paddlepaddle-metax -y || echo "No existing paddlepaddle-metax installation found, skipping uninstallation."
 
@@ -25,7 +33,7 @@ PYTHON_VERSION=${PYTHON_VERSION:-$(python3 -V 2>&1|awk '{print $2}')}
 
 
 export MACA_AI_VERSION=$(cat /opt/maca/Version.txt | cut -d':' -f2)
-WITH_CINN=${WITH_CINN:-OFF}
+WITH_CINN=${WITH_CINN:-ON}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PLATFORM_ID=$(uname -i)
@@ -72,6 +80,7 @@ echo "Platform: ${PLATFORM_ID}"
 PADDLE_CMAKE_ARGS=(
   "-DPY_VERSION=${PYTHON_VERSION}"
   "-DWITH_GPU=OFF"
+  "-DWITH_CINN=${WITH_CINN}"
   "-DWITH_DISTRIBUTE=ON"
   "-DWITH_CUSTOM_DEVICE_SUB_BUILD=ON"
   "-DCUSTOM_DEVICE_SOURCE_DIR=${METAX_SOURCE_DIR}"
@@ -79,6 +88,7 @@ PADDLE_CMAKE_ARGS=(
 
 CUSTOM_DEVICE_CMAKE_ARGS=(
   "-DPADDLE_SOURCE_DIR=${PADDLE_SOURCE_DIR}"
+  "-DWITH_CINN=${WITH_CINN}"
   "-DPY_VERSION=${PYTHON_VERSION:-3}"             # 如果环境变量未设置，默认为 3，对应 $(which python3) 的版本
   "-DCUDA_ARCH_NAME=Manual"
   "-DCUDA_ARCH_BIN=80"
@@ -109,12 +119,12 @@ cd Paddle/build || { echo "Error: Failed to enter Paddle/build directory!"; exit
 cmake_maca "${PADDLE_CMAKE_ARGS[@]}" -DCMAKE_BUILD_TYPE=Debug "${PADDLE_SOURCE_DIR}" 2>&1 | tee cmake_config.log \
   || { echo "Error: CMake configuration failed! Check cmake_config.log for details."; exit 1; }
 
-
+# 推荐传入的BUILD_JOBS不要太大, 128核 48G内存 j6
 if [[ "${PLATFORM_ID}" == "aarch64" ]]; then
-  env TARGET=ARMV8 make_maca -j$(nproc) || { echo "Error: Paddle build failed!"; exit 1; }
+  env TARGET=ARMV8 make_maca -j"${BUILD_JOBS:-$(nproc)}" || { echo "Error: Paddle build failed!"; exit 1; }
 else
   echo " Building for non-ARM architecture, using default target settings."
-  make_maca -j$(nproc) 2>&1 | tee build.log
+  make_maca -j"${BUILD_JOBS:-$(nproc)}" 2>&1 | tee build.log
 fi
 
 echo "-------------------------------------------------------------------"
